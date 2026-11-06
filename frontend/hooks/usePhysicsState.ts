@@ -275,7 +275,6 @@ interface PhysicsStore {
   setFieldParam: (patch: Partial<FieldParams>) => void;
   requestTransition: (from: number, to: number) => void;
   restoreCue: () => void;
-  switchDemo: (demo: DemoId) => void;
   toggleHold: () => void;
   togglePause: () => void;
   requestRestart: () => void;
@@ -505,13 +504,6 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
       userModified: false,
     }));
   },
-
-  switchDemo: (demo) =>
-    set((state) => ({
-      currentDemo: demo,
-      resetKey: state.resetKey + 1,
-      userModified: true,
-    })),
 
   toggleHold: () => {
     const hold = !get().hold;

@@ -17,7 +17,6 @@ export default function StageControls() {
   const togglePause = usePhysicsStore((s) => s.togglePause);
   const requestRestart = usePhysicsStore((s) => s.requestRestart);
   const restoreCue = usePhysicsStore((s) => s.restoreCue);
-  const switchDemo = usePhysicsStore((s) => s.switchDemo);
   const setBohrParam = usePhysicsStore((s) => s.setBohrParam);
   const setBoxParam = usePhysicsStore((s) => s.setBoxParam);
   const setFieldParam = usePhysicsStore((s) => s.setFieldParam);
@@ -52,19 +51,6 @@ export default function StageControls() {
             Back to text values
           </button>
         )}
-        <select
-          value={currentDemo}
-          onChange={(event) =>
-            switchDemo(event.target.value as "bohr" | "atoms-box" | "field" | "orbit" | "oscillator")
-          }
-          title="Switch demo manually"
-        >
-          <option value="bohr">bohr atom · 3D</option>
-          <option value="atoms-box">atoms in a box · 3D</option>
-          <option value="field">scalar field · 3D</option>
-          <option value="orbit">two-body orbit · 3D</option>
-          <option value="oscillator">pendulum · 3D</option>
-        </select>
         <span className="spacer" />
         <button onClick={toggleHold} aria-pressed={hold} title="Keep the current demo while you scroll (H)">
           Hold demo
