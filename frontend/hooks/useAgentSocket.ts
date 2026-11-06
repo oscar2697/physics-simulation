@@ -79,6 +79,86 @@ export async function interpretDocument(
   return payload.cues ?? [];
 }
 
+export interface InterpretStreamHandlers {
+  onProgress?: (phase: string, done: number, total: number) => void;
+  onFinal?: (cues: InterpretedCue[], cached: boolean) => void;
+  onError?: (message: string) => void;
+}
+
+export async function interpretDocumentStream(
+  filename: string,
+  pages: { page: number; text: string }[],
+  handlers: InterpretStreamHandlers
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/interpret/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, pages }),
+    });
+  } catch {
+    handlers.onError?.(
+      "Cannot reach the backend. Start it with: cd backend && uvicorn app.main:app --reload"
+    );
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    const detail = await response.text().catch(() => "");
+    let message = detail;
+    try {
+      const parsed = JSON.parse(detail) as { detail?: unknown };
+      if (typeof parsed.detail === "string") message = parsed.detail;
+    } catch {
+      // keep the raw body
+    }
+    handlers.onError?.(message.slice(0, 300) || `Backend error ${response.status}`);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const { events, rest } = parseSseChunk(buffer);
+    buffer = rest;
+
+    for (const sse of events) {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(sse.data);
+      } catch {
+        continue;
+      }
+      switch (sse.event) {
+        case "progress":
+          if (typeof parsed.phase === "string") {
+            handlers.onProgress?.(
+              parsed.phase,
+              typeof parsed.done === "number" ? parsed.done : 0,
+              typeof parsed.total === "number" ? parsed.total : 0
+            );
+          }
+          break;
+        case "final":
+          handlers.onFinal?.(
+            (parsed.cues as InterpretedCue[]) ?? [],
+            parsed.cached === true
+          );
+          break;
+        case "error":
+          handlers.onError?.(String(parsed.error ?? "Unknown backend error"));
+          break;
+      }
+    }
+  }
+}
+
 export async function streamTutor(
   payload: TutorRequestPayload,
   handlers: TutorStreamHandlers

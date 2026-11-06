@@ -148,6 +148,7 @@ class InterpretedCue(BaseModel):
 
 class InterpretResult(BaseModel):
     cues: list[InterpretedCue] = Field(default_factory=list)
+    cached: bool = False
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -299,8 +300,22 @@ def _design_cues(title: str, concepts: list[Concept], total_pages: int) -> list[
     return cues[:MAX_CUES]
 
 
-def interpret_document(title: str, pages: list[dict[str, Any]]) -> InterpretResult:
-    """Run the analyst → designer pipeline over the document."""
+def interpret_document(
+    title: str,
+    pages: list[dict[str, Any]],
+    on_progress: Any | None = None,
+) -> InterpretResult:
+    """Run the analyst → designer pipeline over the document.
+
+    on_progress, when given, is called as on_progress(phase, done, total) where
+    phase is "analyzing" or "designing" — used by the SSE endpoint to stream
+    live progress to the reader UI.
+    """
+
+    def emit(phase: str, done: int, total: int) -> None:
+        if on_progress is not None:
+            on_progress(phase, done, total)
+
     trimmed: list[dict[str, Any]] = []
     for entry in pages[:MAX_PAGES]:
         text = (entry.get("text") or "")[:MAX_PAGE_CHARS]
@@ -308,11 +323,16 @@ def interpret_document(title: str, pages: list[dict[str, Any]]) -> InterpretResu
     if not trimmed:
         return InterpretResult(cues=[])
 
+    chunks = _chunk_pages(trimmed)
     concepts: list[Concept] = []
-    for chunk in _chunk_pages(trimmed):
+    emit("analyzing", 0, len(chunks))
+    for i, chunk in enumerate(chunks, start=1):
         concepts.extend(_analyze_chunk(title, chunk, len(trimmed)))
+        emit("analyzing", i, len(chunks))
     if not concepts:
         return InterpretResult(cues=[])
 
+    emit("designing", 0, 1)
     cues = _design_cues(title, concepts, len(trimmed))
+    emit("designing", 1, 1)
     return InterpretResult(cues=cues)

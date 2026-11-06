@@ -21,3 +21,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local interpret-result cache (regenerable)
+backend/.interpret_cache/

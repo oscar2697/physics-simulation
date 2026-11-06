@@ -1,5 +1,6 @@
 """API routes: tutor (SSE streaming), document interpretation, documents listing and PDF serving."""
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.agents.graph import build_graph
 from app.agents.state import TutorRequest
 from app.core.config import get_settings
+from app.llm import cache as interpret_cache
 from app.llm.interpret import InterpretError, InterpretResult, interpret_document
 
 router = APIRouter(prefix="/api")
@@ -167,12 +169,61 @@ async def interpret(payload: InterpretRequest) -> InterpretResult:
     settings = get_settings()
     if not settings.llm_configured:
         raise HTTPException(status_code=503, detail="NVIDIA_API_KEY is not set on the backend.")
+    entries = [{"page": entry.page, "text": entry.text} for entry in payload.pages]
+    key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id)
+    hit = interpret_cache.load(key)
+    if hit is not None:
+        try:
+            return InterpretResult.model_validate({**hit, "cached": True})
+        except Exception:
+            pass
     try:
-        return interpret_document(
-            payload.filename,
-            [{"page": entry.page, "text": entry.text} for entry in payload.pages],
-        )
+        result = interpret_document(payload.filename, entries)
     except InterpretError as exc:
         # Surface the real cause (retired model, missing account access, overload…)
         # instead of letting it look like the paper could not be interpreted.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    interpret_cache.save(key, result.model_dump())
+    return result
+
+
+async def _stream_interpret(payload: InterpretRequest):
+    """Same pipeline as /api/interpret, but with SSE progress events."""
+    settings = get_settings()
+    if not settings.llm_configured:
+        yield _sse({"error": "NVIDIA_API_KEY is not set on the backend."}, event="error")
+        return
+    entries = [{"page": entry.page, "text": entry.text} for entry in payload.pages]
+    key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id)
+    hit = interpret_cache.load(key)
+    if hit is not None:
+        try:
+            result = InterpretResult.model_validate({**hit, "cached": True})
+            yield _sse({"cues": [c.model_dump() for c in result.cues], "cached": True}, event="final")
+            return
+        except Exception:
+            pass
+    yield _sse({"phase": "reading", "done": len(entries), "total": len(entries)}, event="progress")
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def on_progress(phase: str, done: int, total: int) -> None:
+        queue.put_nowait({"phase": phase, "done": done, "total": total})
+
+    try:
+        result = await asyncio.to_thread(interpret_document, payload.filename, entries, on_progress)
+    except InterpretError as exc:
+        yield _sse({"error": str(exc)}, event="error")
+        return
+    while not queue.empty():
+        yield _sse(queue.get_nowait(), event="progress")
+    interpret_cache.save(key, result.model_dump())
+    yield _sse({"cues": [c.model_dump() for c in result.cues], "cached": False}, event="final")
+
+
+@router.post("/interpret/stream")
+async def interpret_stream(payload: InterpretRequest) -> StreamingResponse:
+    return StreamingResponse(
+        _stream_interpret(payload),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

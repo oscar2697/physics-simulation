@@ -260,6 +260,7 @@ interface PhysicsStore {
     }[]
   ) => void;
   setInterpretError: (message: string) => void;
+  setInterpretProgress: (message: string) => void;
   pinCue: (id: string, page: number) => void;
   setReading: (info: {
     visiblePage?: number | null;
@@ -420,6 +421,13 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
       interpretStatus: "error",
       interpretLabel: message,
     }),
+
+  setInterpretProgress: (message) =>
+    set((state) =>
+      state.interpretStatus === "pending"
+        ? { interpretLabel: message }
+        : { interpretStatus: "pending" as InterpretStatus, interpretLabel: message }
+    ),
 
   setFieldParam: (patch) =>
     set((state) => ({

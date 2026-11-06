@@ -6,7 +6,7 @@ import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 
-import { documentFileUrl, interpretDocument, listDocuments } from "@/hooks/useAgentSocket";
+import { documentFileUrl, interpretDocumentStream, listDocuments } from "@/hooks/useAgentSocket";
 import { usePhysicsStore } from "@/hooks/usePhysicsState";
 import { fallbackCueMap } from "@/lib/cues";
 import type { DocumentInfo } from "@/types/physics";
@@ -84,6 +84,13 @@ export default function PdfReader() {
   const pageOffsetsRef = useRef<number[]>([0]);
   const lastScrollNonceRef = useRef(0);
   const interpretStartedRef = useRef(false);
+  const blobUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+    };
+  }, []);
 
   const setDocument = usePhysicsStore((s) => s.setDocument);
   const loadCuesFor = usePhysicsStore((s) => s.loadCuesFor);
@@ -160,6 +167,11 @@ export default function PdfReader() {
 
   const resetForNewDoc = useCallback(
     (url: string, name: string) => {
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+      if (url.startsWith("blob:")) blobUrlRef.current = url;
       textCacheRef.current = new Map();
       pdfDocRef.current = null;
       setPageHeights(new Map());
@@ -216,33 +228,40 @@ export default function PdfReader() {
 
   // Background queue: extract every page once, pin keyword cues to pages,
   // and for unknown papers ask the AI to map the document to demo cues.
+  // Phase A extracts the first pages and starts interpretation immediately;
+  // phase B extracts the rest (keyword pinning only), so big PDFs don't stall.
   useEffect(() => {
     const pdf = pdfDocRef.current;
     if (numPages === 0 || !pdf || !fileUrl) return;
     let cancelled = false;
-    (async () => {
-      for (let p = 1; p <= pdf.numPages; p++) {
+
+    const extractPage = async (p: number) => {
+      if (textCacheRef.current.has(p)) return;
+      try {
+        const page = await pdf.getPage(p);
+        const tc = await page.getTextContent();
         if (cancelled) return;
-        if (!textCacheRef.current.has(p)) {
-          try {
-            const page = await pdf.getPage(p);
-            const tc = await page.getTextContent();
-            if (cancelled) return;
-            const text = extractPageText(tc.items as Array<Record<string, unknown>>);
-            textCacheRef.current.set(p, text);
-            const lower = text.toLowerCase();
-            const storeCues = usePhysicsStore.getState().cues;
-            for (const cue of storeCues) {
-              if (cue.pinnedPage === null && cue.at.keywords?.some((kw) => matchesKeyword(lower, kw))) {
-                usePhysicsStore.getState().pinCue(cue.id, p);
-                break;
-              }
-            }
-          } catch {
-            // skip unreadable pages
+        const text = extractPageText(tc.items as Array<Record<string, unknown>>);
+        textCacheRef.current.set(p, text);
+        const lower = text.toLowerCase();
+        const storeCues = usePhysicsStore.getState().cues;
+        for (const cue of storeCues) {
+          if (cue.pinnedPage === null && cue.at.keywords?.some((kw) => matchesKeyword(lower, kw))) {
+            usePhysicsStore.getState().pinCue(cue.id, p);
+            break;
           }
-          await new Promise((resolve) => setTimeout(resolve, 0));
         }
+      } catch {
+        // skip unreadable pages
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    (async () => {
+      const firstPassEnd = Math.min(pdf.numPages, INTERPRET_PAGE_CAP);
+      for (let p = 1; p <= firstPassEnd; p++) {
+        if (cancelled) return;
+        await extractPage(p);
       }
       if (cancelled) return;
       const store = usePhysicsStore.getState();
@@ -260,21 +279,33 @@ export default function PdfReader() {
         };
         if (pages.length === 0) {
           await applyFallback("No text could be extracted from this PDF");
-          return;
+        } else {
+          const setProgress = usePhysicsStore.getState().setInterpretProgress;
+          await interpretDocumentStream(fileName ?? "document.pdf", pages, {
+            onProgress: (phase, done, total) => {
+              if (cancelled) return;
+              if (phase === "analyzing") setProgress(`AI is analyzing concepts (${done}/${total})…`);
+              else if (phase === "designing") setProgress("AI is designing demo points…");
+              else setProgress("AI is reading the paper…");
+            },
+            onFinal: async (cues) => {
+              if (cancelled) return;
+              if (cues.length === 0) {
+                await applyFallback("The AI found no simulatable concepts — using default demo points");
+                return;
+              }
+              usePhysicsStore.getState().loadLlmCues(cues);
+            },
+            onError: async (message) => {
+              if (cancelled) return;
+              await applyFallback(`AI interpretation failed (${message}) — using default demo points`);
+            },
+          });
         }
-        try {
-          const cues = await interpretDocument(fileName ?? "document.pdf", pages);
-          if (cancelled) return;
-          if (cues.length === 0) {
-            await applyFallback("The AI found no simulatable concepts — using default demo points");
-            return;
-          }
-          usePhysicsStore.getState().loadLlmCues(cues);
-        } catch (error) {
-          if (cancelled) return;
-          const detail = error instanceof Error ? error.message : "unknown error";
-          await applyFallback(`AI interpretation failed (${detail}) — using default demo points`);
-        }
+      }
+      for (let p = firstPassEnd + 1; p <= pdf.numPages; p++) {
+        if (cancelled) return;
+        await extractPage(p);
       }
     })();
     return () => {
