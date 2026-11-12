@@ -49,9 +49,14 @@ export default function FieldScene() {
   const hatBallsRef = useRef<HatBall[]>([]);
   const timeRef = useRef(0);
 
+  // Valley radius follows the paper's vacuum value: amplitude ~= phi_0 renders
+  // as v = 1 (the canonical hat); clamped so the shape stays readable.
+  const vev = Math.min(1.8, Math.max(0.5, amplitude / 3.2));
+
   const hatGeometry = useMemo(() => {
     const positions = new Float32Array(HAT_POINTS * HAT_POINTS * 3);
     let i = 0;
+    const v2 = vev * vev;
     for (let yi = 0; yi < HAT_POINTS; yi++) {
       const y = -HAT_RANGE + (2 * HAT_RANGE * yi) / (HAT_POINTS - 1);
       for (let xi = 0; xi < HAT_POINTS; xi++) {
@@ -59,13 +64,13 @@ export default function FieldScene() {
         const r2 = x * x + y * y;
         positions[i++] = x;
         positions[i++] = y;
-        positions[i++] = (r2 - 1) * (r2 - 1) * HAT_Z_SCALE;
+        positions[i++] = (r2 - v2) * (r2 - v2) * HAT_Z_SCALE;
       }
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     return geo;
-  }, []);
+  }, [vev]);
 
   useEffect(() => () => hatGeometry.dispose(), [hatGeometry]);
 
@@ -106,10 +111,11 @@ export default function FieldScene() {
       position.needsUpdate = true;
     } else {
       const lambda = coupling;
+      const v2 = vev * vev;
       const balls = hatBallsRef.current;
       balls.forEach((ball, index) => {
         const r2 = ball.x * ball.x + ball.y * ball.y;
-        const grad = 4 * (r2 - 1);
+        const grad = 4 * (r2 - v2);
         ball.vx += -grad * ball.x * lambda * dt * 2;
         ball.vy += -grad * ball.y * lambda * dt * 2;
         ball.vx *= 0.985;
@@ -126,7 +132,7 @@ export default function FieldScene() {
           mesh.position.set(
             ball.x,
             ball.y,
-            (rr2 - 1) * (rr2 - 1) * HAT_Z_SCALE + 0.15
+            (rr2 - v2) * (rr2 - v2) * HAT_Z_SCALE + 0.15
           );
         }
       });
@@ -143,6 +149,11 @@ export default function FieldScene() {
         <group rotation-x={-Math.PI / 2.1}>
           <mesh geometry={hatGeometry}>
             <meshBasicMaterial color={INK} wireframe transparent opacity={0.55} />
+          </mesh>
+          {/* Vacuum ring: the valley r = v where the field settles (the VEV). */}
+          <mesh position={[0, 0, 0.03]}>
+            <torusGeometry args={[vev, 0.028, 10, 72]} />
+            <meshBasicMaterial color={SIM.accent} transparent opacity={0.9} />
           </mesh>
           {Array.from({ length: BALL_COUNT }, (_, i) => (
             <mesh

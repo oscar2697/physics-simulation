@@ -25,6 +25,10 @@ MAX_CONCEPTS = 30
 MAX_CUES = 14
 CHUNK_SIZE = 4
 
+# Bump when prompts or staging semantics change so stale cached cue maps
+# (which were designed under older rules) are never reused.
+PIPELINE_VERSION = "v3-faithful-coverage"
+
 
 class InterpretError(RuntimeError):
     """Raised when the LLM call fails for a reason other than malformed JSON.
@@ -57,6 +61,14 @@ DEMOS_VOCAB = """Available demos and their parameters:
    params: {"mode": "wave" (traveling wave) | "mexican-hat" (V = lambda*(|phi|^2 - v^2)^2 with balls
             rolling from the symmetric top into the valley),
             "amplitude": float 0.5-4.0, "frequency": float 0.2-3.0, "coupling": float 0.5-3.0}
+
+   Staging notes the designer must know:
+   - "mexican-hat" renders the V = lambda*(r^2 - v^2)^2 surface: unstable symmetric peak at
+     the center, valley ring (the vacuum states) with an accent marker on the vacuum ring,
+     and balls that start at the symmetric top and roll down into the valley.
+     The valley radius v follows "amplitude" (the paper's vacuum value, e.g. phi_0 = 3.2,
+     renders as v = 1) and the steepness follows "coupling" (lambda).
+   - "wave" renders a traveling ripple grid — only for propagating waves/excitations.
 
 4. demo "orbit" — 3D two-body orbit (gravity, central forces, Kepler, planetary motion,
    bound systems, binaries):
@@ -111,8 +123,24 @@ parameter. When it does not, choose pedagogically sensible values.
 
 Rules:
 - 4 to {max_cues} cues, in page order, covering the paper from beginning to end.
-- If no demo matches a concept well, still pick the closest one and make the note explain the analogy.
+- FAITHFULNESS FIRST — the stage must show the paper's own objects, not a loose analogy:
+  * Any discussion of a potential V(phi), symmetry breaking, vacuum states, vacuum
+    expectation value, or minima MUST use demo "field" with mode "mexican-hat".
+  * Couplings and numbers from the paper (g', lambda, vev, masses) MUST set "coupling"
+    (and amplitude/frequency where they genuinely correspond). Never leave defaults
+    when the paper gives a number. Vary parameters cue by cue — copy-pasted identical
+    params across all cues is a defect.
+  * Avoid "oscillator" (a mechanical pendulum) and "atoms-box" (a kinetic gas) unless
+    the paper is actually about oscillations/mechanics or kinetic/statistical matter.
+    "orbit" only for genuine two-body/gravitational/central-force systems.
+  * COVERAGE: the cues must span the whole paper — early, middle AND late sections
+    (e.g. consequences, uncertainty arguments, reformulations, summary). Do not cluster
+    all cues in the first half. If a late section has no natural demo, use the closest
+    "field" mode and make the note say exactly what each visual element stands for.
+  * "wave" only for genuinely propagating waves or field excitations.
 - Titles: max 40 chars. Notes: max 180 chars, plain English, referencing what that part of the text says.
+  Each note must name the paper's object shown on stage (e.g. "the ball rolls from the
+  symmetric top into the valley — the vacuum of Fig. 1").
 - Only use parameter names from the vocabulary. Omit parameters you don't need.
 
 Respond with ONLY a JSON object, no markdown fences:

@@ -13,7 +13,7 @@ from app.agents.graph import build_graph
 from app.agents.state import TutorRequest
 from app.core.config import get_settings
 from app.llm import cache as interpret_cache
-from app.llm.interpret import InterpretError, InterpretResult, interpret_document
+from app.llm.interpret import PIPELINE_VERSION, InterpretError, InterpretResult, interpret_document
 
 router = APIRouter(prefix="/api")
 
@@ -170,7 +170,7 @@ async def interpret(payload: InterpretRequest) -> InterpretResult:
     if not settings.llm_configured:
         raise HTTPException(status_code=503, detail="NVIDIA_API_KEY is not set on the backend.")
     entries = [{"page": entry.page, "text": entry.text} for entry in payload.pages]
-    key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id)
+    key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id + "|" + PIPELINE_VERSION)
     hit = interpret_cache.load(key)
     if hit is not None:
         try:
@@ -194,7 +194,7 @@ async def _stream_interpret(payload: InterpretRequest):
         yield _sse({"error": "NVIDIA_API_KEY is not set on the backend."}, event="error")
         return
     entries = [{"page": entry.page, "text": entry.text} for entry in payload.pages]
-    key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id)
+    key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id + "|" + PIPELINE_VERSION)
     hit = interpret_cache.load(key)
     if hit is not None:
         try:
