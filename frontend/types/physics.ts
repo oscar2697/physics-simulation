@@ -1,4 +1,19 @@
-export type DemoId = "bohr" | "atoms-box" | "field" | "orbit" | "oscillator";
+export type DemoId = "bohr" | "atoms-box" | "field" | "orbit" | "oscillator" | "engine";
+
+export interface EngineParticleSpec {
+  p: [number, number];
+  v?: [number, number];
+  label?: string;
+  kind?: "scalar" | "fermion" | "boson";
+}
+
+export interface EngineSceneSpec {
+  mode?: "replace" | "extend";
+  surface: { expr: string; range?: number; z?: number };
+  particles: EngineParticleSpec[];
+  interactions?: { from: string; to: string; label?: string }[];
+  sim?: { damping?: number; speed?: number };
+}
 
 export interface CueParams {
   showNucleus?: boolean;
@@ -24,6 +39,7 @@ export interface CueParams {
   oscLength?: number;
   oscDamping?: number;
   oscDriven?: boolean;
+  scene?: EngineSceneSpec;
 }
 
 export interface Cue {
@@ -32,6 +48,7 @@ export interface Cue {
   at: { page?: number; keywords?: string[] };
   title: string;
   note: string;
+  assumptions?: string;
   params: CueParams;
 }
 
@@ -53,11 +70,13 @@ export interface InterpretedCuePayload {
   demo: DemoId;
   title: string;
   note: string;
+  assumptions: string;
   params: Record<string, unknown>;
 }
 
 export interface SceneStatePayload {
   active_section: string | null;
+  active_cue: { title: string; note: string; assumptions: string; demo: DemoId } | null;
   visible_page: number | null;
   total_pages: number | null;
   scroll_progress: number | null;

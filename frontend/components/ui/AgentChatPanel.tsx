@@ -4,12 +4,28 @@ import { useEffect, useRef, useState } from "react";
 
 import { buildSceneStatePayload, streamTutor } from "@/hooks/useAgentSocket";
 import { electronLive, usePhysicsStore } from "@/hooks/usePhysicsState";
-import type { ChatMessage } from "@/types/physics";
+import type { ChatMessage, SceneAdjustment } from "@/types/physics";
+
+function isApplicableAdjustment(adjustment: SceneAdjustment): boolean {
+  if (adjustment.target === "energy_level_n") {
+    return (
+      typeof adjustment.value === "number" &&
+      Number.isInteger(adjustment.value) &&
+      adjustment.value >= 1 &&
+      adjustment.value <= 5
+    );
+  }
+  return (
+    ["show_gluons", "show_bosons", "show_electron_cloud"].includes(adjustment.target) &&
+    typeof adjustment.value === "boolean"
+  );
+}
 
 export default function AgentChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [appliedAdjustments, setAppliedAdjustments] = useState<Record<string, number[]>>({});
   const listRef = useRef<HTMLDivElement>(null);
 
   const setChatOpen = usePhysicsStore((s) => s.setChatOpen);
@@ -40,12 +56,31 @@ export default function AgentChatPanel() {
         query,
         scene_state: buildSceneStatePayload({
           activeSectionId: activeCue?.id ?? null,
+          activeCue: activeCue
+            ? {
+                title: activeCue.title,
+                note: activeCue.note,
+                assumptions: activeCue.assumptions || "No scene-level assumptions were provided; treat this as a qualitative illustration.",
+                demo: activeCue.demo,
+              }
+            : null,
           visiblePage: store.visiblePage,
           totalPages: store.totalPages,
           scrollProgress: store.scrollProgress,
           energyLevelN: store.bohr.energyLevelN,
           electronPosition: electronLive.position,
-          atomParams: { demo: store.currentDemo, bohr: store.bohr, box: store.box },
+          atomParams: {
+            demo: store.currentDemo,
+            bohr: store.bohr,
+            box: store.box,
+            field: store.field,
+            orbit: store.orbit,
+            oscillator: store.osc,
+            engine: store.engineSpec,
+            engineSpeed: store.engineSpeed,
+            engineDamping: store.engineDamping,
+            pending_transition: store.bohr.pendingTransition,
+          },
         }),
         document_context: store.documentContext || null,
       },
@@ -106,12 +141,31 @@ export default function AgentChatPanel() {
               {message.content}
               {message.streaming && <span className="muted">…</span>}
               {message.adjustments && message.adjustments.length > 0 && (
-                <div>
-                  {message.adjustments.map((adjustment, i) => (
-                    <span key={i} className="chip" title={adjustment.reason ?? undefined}>
-                      {adjustment.target} → {String(adjustment.value)}
-                    </span>
-                  ))}
+                <div className="flex flex-wrap items-center gap-1">
+                  {message.adjustments.map((adjustment, i) => {
+                    const applied = appliedAdjustments[message.id]?.includes(i) ?? false;
+                    return isApplicableAdjustment(adjustment) ? (
+                      <button
+                        key={i}
+                        className="chip"
+                        title={adjustment.reason ?? "Apply this tutor suggestion to the scene"}
+                        disabled={applied}
+                        onClick={() => {
+                          usePhysicsStore.getState().applyTutorAdjustment(adjustment);
+                          setAppliedAdjustments((current) => ({
+                            ...current,
+                            [message.id]: [...(current[message.id] ?? []), i],
+                          }));
+                        }}
+                      >
+                        {applied ? "Applied" : "Apply"}: {adjustment.target} → {String(adjustment.value)}
+                      </button>
+                    ) : (
+                      <span key={i} className="chip" title={adjustment.reason ?? "This suggestion is not supported by the current MVP."}>
+                        Suggestion unavailable: {adjustment.target}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </div>

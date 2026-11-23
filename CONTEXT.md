@@ -23,10 +23,12 @@ This project is an interactive, web-based educational platform inspired by the "
 
 ## 5. MVP Scope (v1) — Agreed Decisions
 - **Full flow MVP:** Reader (PDF) + interactive Stage (demo canvas) + context-aware AI Tutor, all working together.
-- **Simulations:** five 3D demos — Bohr atom model (energy levels, transitions), "atoms in a box" (gas/liquid, kinetic theory), a scalar field demo (traveling wave / Mexican-hat potential V(φ) = λ(|φ|²−v²)²), a two-body orbit (Kepler, gravity), and a pendulum (harmonic motion, damping, driving).
-- **Reader format:** PDF-only; the demo is driven by declarative **cue maps**. Known documents (Feynman Vol. I) get hand-authored keyword cues; **any other physics PDF is interpreted by the AI**: the backend reads the extracted text and generates the cue map (`POST /api/interpret`) — this is the hybrid strategy.
+- **Simulations:** the five named 3D demos plus a generated scalar-potential scene. The generated scene can accumulate particles while the same system is being discussed and replace the scene when the paper changes topic. Labeled links and vertices can illustrate interactions; they are diagrammatic and do not calculate pairwise forces or quantum amplitudes. This bounded visualization model is not a general-purpose solver; its assumptions and omitted physics must be visible.
+- **Reader format:** users can open local PDFs or choose served documents. Clearly identified "Atoms in Motion" chapter-one files and explicitly named Bohr papers get hand-authored keyword cues; other physics PDFs are interpreted by the AI, which generates page-anchored scene cues and model assumptions (`POST /api/interpret/stream`). Text extraction and interpretation cover up to 120 pages; scanned PDFs without an extractable text layer are not OCR'd.
 - **Layout & style:** Stage (demo) on the left, reader on the right. Aged-book print aesthetic: cream paper (#f8f3e5), warm ink (#2b2620), pen-blue accent (#35618f), serif prose, ink wireframes, dotted graph-paper canvas.
-- **UI language:** English (reader content and tutor explanations in English).
+- **UI language:** English controls and scene descriptions; the tutor answers in the language of the user's question.
 - **Compute split:** Real-time physics runs in the browser (JS, 60 FPS); heavy calculations (SciPy/NumPy validation, solver routines) and LLM interpretation run in the Python backend.
 - **Dev environment:** Local development only (`npm run dev` + `uvicorn`); no Docker for now.
-- **Roadmap:** more demos per chapter (orbital mechanics, waves, E&M), richer cue vocabulary for the LLM interpreter, pre-render caching of interpreted cues.
+- **Tutor controls:** answer questions using the current page and scene, then offer supported scene changes for explicit user acceptance.
+- **MVP limits:** generated scenes currently support scalar potentials in two spatial coordinates with at most eight particles. Other systems use fixed demos; unsupported dynamics are represented as diagrams and disclosed as assumptions rather than presented as solved physics.
+- **Roadmap:** broaden the generated-scene vocabulary and physical interactions, improve scanned-PDF support, and add automated frontend/backend coverage.

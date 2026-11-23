@@ -44,6 +44,7 @@ Visual style is a minimalist print aesthetic: paper white (`#fff`) on a warm gra
 │   │   │   ├── ParticleControls.tsx
 │   │   │   └── scenes/
 │   │   │       ├── BohrAtomScene.tsx   # 3D perspective, ink wireframes
+│   │   │       ├── EngineScene.tsx     # Generated scalar potential + particles
 │   │   │       └── AtomsBoxScene.tsx   # 2D ortho gas/liquid (ch. 1)
 │   │   └── ui/
 │   │       ├── StageControls.tsx      # Transport + sliders + readouts
@@ -76,16 +77,16 @@ Scroll drives the demo through **declarative cues**, resolved against the actual
 
 1. **Reading position:** a sticky read-line at 32% of the reader viewport marks the reading position (page + offset).
 2. **Cue maps:** per-document sets of cues (`lib/cues.ts`), each `{ demo, at: {page | keywords}, title, note, params }`.
-   - **Hand-authored** (kind `authored`): known documents (Feynman Vol. I → "Atoms in Motion") get keyword-anchored maps selected by filename.
-   - **AI-interpreted** (kind `llm`): any other physics PDF runs a **two-agent pipeline** (`POST /api/interpret`, `app/llm/interpret.py`):
+   - **Hand-authored** (kind `authored`): clearly identified "Atoms in Motion" chapter-one files and explicitly named Bohr papers get keyword-anchored maps. Other files, including general Feynman Vol. I extracts and hydrogen papers, go through AI interpretation.
+   - **AI-interpreted** (kind `llm`): other physics PDFs run a **two-agent pipeline** (`POST /api/interpret/stream`, `app/llm/interpret.py`):
      - **Agent 1 — Physics Analyst**: reads the paper in chunks (line-structured text so formulas survive) and extracts concepts with page references, formulas and importance scores.
-     - **Agent 2 — Simulation Designer**: maps the analysis to demo cues, **using the paper's own numbers** (frequencies, couplings, mass ratios, eccentricities…) to set simulation parameters, with strict-JSON retries and a deterministic fallback if the AI fails.
+     - **Agent 2 — Simulation Designer**: maps the analysis to demo cues, **using the paper's own numbers** (frequencies, couplings, mass ratios, eccentricities…) to set simulation parameters. It can generate a scalar-potential scene, extend the same system with new particles, or replace it when the topic changes. Cues include assumptions and model limits.
 3. **Anchor pinning:** the reader extracts each page's text in the background and pins keyword-anchored cues to the first matching page (word-boundary matching, one cue per page). AI cues arrive pre-pinned to their pages. Pinned cues show as diamonds ◇ in the left margin; clicking jumps there.
-4. **Sticky activation:** the active cue is the last cue pinned at-or-before the reading position. On change, the stage applies the cue's demo + params, title and note. `Hold demo` (H) freezes sync; J/K jump between cue points.
+4. **Sticky activation:** the active cue is the last cue pinned at-or-before the reading position. On change, the stage applies the cue's demo + params, title, note and assumptions. Engine cues marked `extend` carry forward prior particles for the same system; `replace` starts a new system. `Hold demo` (H) freezes sync; J/K jump between cue points.
 5. **Bi-directional:** sliders on the stage modify demo params live ("Back to text values" restores the cue's canonical params). In the Bohr demo the electron can be dragged between orbits, triggering a physical transition.
-6. **LLM layer (tutor):** the AI tutor receives the current page text, the active cue and the live demo state; it can answer questions and suggest scene adjustments (streamed via SSE).
+6. **LLM layer (tutor):** the AI tutor receives the current page text, the active cue and the live demo state; it can answer questions and suggest scene adjustments (streamed via SSE). Supported adjustments are presented for user acceptance before being applied.
 
-**Demos:** `bohr` (3D atom), `atoms-box` (3D cube of bouncing atoms), `field` (3D scalar field: traveling wave or Mexican-hat potential with rolling balls), `orbit` (3D two-body Kepler orbit with trail), `oscillator` (3D pendulum with damping/driving). All drawn in a two-color vintage-plate palette (pen blue + burnt orange) on a dotted graph-paper canvas.
+**Demos:** `bohr` (3D atom), `atoms-box` (3D cube of bouncing atoms), `field` (3D scalar field), `orbit` (3D two-body Kepler orbit), `oscillator` (3D pendulum), and `engine` (generated scalar potential with particles moving under its gradient). The generated engine is limited to a 2D scalar potential and up to eight particles; labeled interaction links and vertices animate as diagram edges, not as calculated forces or quantum amplitudes. Cue assumptions disclose these limits and other qualitative approximations. All demos use a two-color vintage-plate palette on a dotted graph-paper canvas.
 
 ## 4. Agentic Workflow (LangGraph State Machine)
 1. State Ingestion (AgentState): Captures `user_query`, `scene_state` (active cue, page, energy level, demo params), and `document_context` (extracted text of the page at the reading line).

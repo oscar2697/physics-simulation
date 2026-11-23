@@ -163,10 +163,10 @@ const LLM_MAP: CueMap = {
 
 export function resolveCueMap(filename: string | null): CueMap {
   const name = (filename ?? "").toLowerCase();
-  if (/(ch|chapter)[\s._-]*1\b|atoms?\s+in\s+motion|vol(ume)?[\s._-]*(1|i)\b/.test(name)) {
+  if (/(ch|chapter)[\s._-]*1\b|atoms?\s+in\s+motion/.test(name)) {
     return CH1_MAP;
   }
-  if (/bohr|quantum|hydrogen|spectr/.test(name)) {
+  if (/\bbohr\b/.test(name)) {
     return BOHR_QUANTUM_MAP;
   }
   return LLM_MAP;

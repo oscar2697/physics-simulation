@@ -8,8 +8,10 @@ import {
   type Cue,
   type CueParams,
   type DemoId,
+  type EngineSceneSpec,
   type PhysicsResult,
   type ResolvedCue,
+  type SceneAdjustment,
 } from "@/types/physics";
 import { resolveCueMap } from "@/lib/cues";
 
@@ -94,6 +96,9 @@ const OSCILLATOR_DEFAULTS: OscillatorParams = {
   driven: false,
 };
 
+const DEFAULT_SCENE_ASSUMPTION =
+  "No scene-level assumptions were provided; treat this as a qualitative illustration.";
+
 function computeMetrics(n: number) {
   return { energyEv: energyForLevelEv(n), radiusAngstrom: radiusForLevelAngstrom(n) };
 }
@@ -105,8 +110,23 @@ interface AppliedParams {
   field: FieldParams;
   orbit: OrbitParams;
   osc: OscillatorParams;
+  engineSpec: EngineSceneSpec | null;
+  engineSpeed: number;
+  engineDamping: number;
   metrics: { energyEv: number; radiusAngstrom: number };
   resetKey: number;
+}
+
+function isEngineScene(value: unknown): value is EngineSceneSpec {
+  if (typeof value !== "object" || value === null) return false;
+  const spec = value as Record<string, unknown>;
+  const surface = spec.surface as Record<string, unknown> | undefined;
+  return (
+    typeof surface?.expr === "string" &&
+    surface.expr.length > 0 &&
+    Array.isArray(spec.particles) &&
+    spec.particles.length > 0
+  );
 }
 
 function applyCueParams(
@@ -117,10 +137,14 @@ function applyCueParams(
     field: FieldParams;
     orbit: OrbitParams;
     osc: OscillatorParams;
+    engineSpec: EngineSceneSpec | null;
+    engineSpeed: number;
+    engineDamping: number;
     resetKey: number;
   },
   params: CueParams
 ): AppliedParams {
+  const cuesEngine = params.scene !== undefined && isEngineScene(params.scene);
   const cuesBohr =
     params.energyLevelN !== undefined ||
     params.pendingTransition !== undefined ||
@@ -149,17 +173,19 @@ function applyCueParams(
     params.oscLength !== undefined ||
     params.oscDamping !== undefined ||
     params.oscDriven !== undefined;
-  const currentDemo: DemoId = cuesBox
-    ? "atoms-box"
-    : cuesField
-      ? "field"
-      : cuesOrbit
-        ? "orbit"
-        : cuesOsc
-          ? "oscillator"
-          : cuesBohr
-            ? "bohr"
-            : state.currentDemo;
+  const currentDemo: DemoId = cuesEngine
+    ? "engine"
+    : cuesBox
+      ? "atoms-box"
+      : cuesField
+        ? "field"
+        : cuesOrbit
+          ? "orbit"
+          : cuesOsc
+            ? "oscillator"
+            : cuesBohr
+              ? "bohr"
+              : state.currentDemo;
 
   const bohr: BohrParams =
     currentDemo === "bohr" && state.currentDemo !== "bohr" ? { ...BOHR_DEFAULTS } : { ...state.bohr };
@@ -208,6 +234,13 @@ function applyCueParams(
   osc.damping = params.oscDamping ?? osc.damping;
   osc.driven = params.oscDriven ?? osc.driven;
 
+  const engineSpec: EngineSceneSpec | null =
+    cuesEngine && params.scene ? (params.scene as EngineSceneSpec) : state.engineSpec;
+  const specChanged =
+    JSON.stringify(engineSpec ?? null) !== JSON.stringify(state.engineSpec ?? null);
+  const engineSpeed = params.scene?.sim?.speed ?? (specChanged ? 1 : state.engineSpeed);
+  const engineDamping = params.scene?.sim?.damping ?? (specChanged ? 0.02 : state.engineDamping);
+
   return {
     currentDemo,
     bohr,
@@ -215,8 +248,14 @@ function applyCueParams(
     field,
     orbit,
     osc,
+    engineSpec,
+    engineSpeed,
+    engineDamping,
     metrics: computeMetrics(bohr.energyLevelN),
-    resetKey: currentDemo !== state.currentDemo ? state.resetKey + 1 : state.resetKey,
+    resetKey:
+      currentDemo !== state.currentDemo || (currentDemo === "engine" && specChanged)
+        ? state.resetKey + 1
+        : state.resetKey,
   };
 }
 
@@ -235,11 +274,15 @@ interface PhysicsStore {
   currentDemo: DemoId;
   demoTitle: string;
   demoNote: string;
+  demoAssumptions: string;
   bohr: BohrParams;
   box: BoxParams;
   field: FieldParams;
   orbit: OrbitParams;
   osc: OscillatorParams;
+  engineSpec: EngineSceneSpec | null;
+  engineSpeed: number;
+  engineDamping: number;
   metrics: { energyEv: number; radiusAngstrom: number };
   chatOpen: boolean;
   lastPhysics: PhysicsResult | null;
@@ -256,6 +299,7 @@ interface PhysicsStore {
       demo: DemoId;
       title: string;
       note: string;
+      assumptions: string;
       params: Record<string, unknown>;
     }[]
   ) => void;
@@ -273,6 +317,7 @@ interface PhysicsStore {
   setOrbitParam: (patch: Partial<OrbitParams>) => void;
   setOscParam: (patch: Partial<OscillatorParams>) => void;
   setFieldParam: (patch: Partial<FieldParams>) => void;
+  setEngineRuntime: (patch: { speed?: number; damping?: number }) => void;
   requestTransition: (from: number, to: number) => void;
   restoreCue: () => void;
   toggleHold: () => void;
@@ -282,6 +327,7 @@ interface PhysicsStore {
   requestScrollToPage: (page: number) => void;
   jumpToCue: (direction: 1 | -1) => void;
   setLastPhysics: (physics: PhysicsResult | null) => void;
+  applyTutorAdjustment: (adjustment: SceneAdjustment) => void;
   _syncActiveCue: (force?: boolean) => void;
 }
 
@@ -300,11 +346,15 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
   currentDemo: "bohr",
   demoTitle: "Interactive demo",
   demoNote: "Load a PDF to drive the demo from the text you are reading.",
+  demoAssumptions: DEFAULT_SCENE_ASSUMPTION,
   bohr: { ...BOHR_DEFAULTS },
   box: { ...BOX_DEFAULTS },
   field: { ...FIELD_DEFAULTS },
   orbit: { ...ORBIT_DEFAULTS },
   osc: { ...OSCILLATOR_DEFAULTS },
+  engineSpec: null,
+  engineSpeed: 1,
+  engineDamping: 0.02,
   metrics: computeMetrics(1),
   chatOpen: true,
   lastPhysics: null,
@@ -318,6 +368,21 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
       documentContext: "",
       cues: [],
       activeCueIndex: null,
+      demoAssumptions: DEFAULT_SCENE_ASSUMPTION,
+      currentDemo: "bohr",
+      demoTitle: "Loading document…",
+      demoNote: "Preparing the scene points for this paper.",
+      engineSpec: null,
+      engineSpeed: 1,
+      engineDamping: 0.02,
+      bohr: { ...BOHR_DEFAULTS },
+      box: { ...BOX_DEFAULTS },
+      field: { ...FIELD_DEFAULTS },
+      orbit: { ...ORBIT_DEFAULTS },
+      osc: { ...OSCILLATOR_DEFAULTS },
+      metrics: computeMetrics(1),
+      lastPhysics: null,
+      resetKey: get().resetKey + 1,
       visiblePage: null,
       totalPages: null,
       scrollProgress: null,
@@ -336,6 +401,7 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
         interpretLabel: "AI is reading the paper…",
         demoTitle: "Reading the paper…",
         demoNote: "The AI tutor is scanning the text to decide what to simulate as you read.",
+        demoAssumptions: "The simulation will include the model limits and assumptions reported by the interpreter.",
       });
       return;
     }
@@ -364,15 +430,47 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
       ...applyCueParams(state, first.params),
       demoTitle: first.title,
       demoNote: first.note,
+      demoAssumptions: first.assumptions || DEFAULT_SCENE_ASSUMPTION,
       activeCueIndex: 0,
     });
   },
 
   loadLlmCues: (rawCues) => {
-    const cues: ResolvedCue[] = rawCues.map((cue, index) => {
+    let previousEngineSpec: EngineSceneSpec | null = null;
+    const orderedCues = [...rawCues].sort((a, b) => a.page - b.page);
+    const cues: ResolvedCue[] = orderedCues.map((cue, index) => {
       const raw = cue.params as Record<string, unknown>;
+      let scene = isEngineScene(raw.scene) ? (raw.scene as EngineSceneSpec) : undefined;
+      if (scene?.mode === "extend" && previousEngineSpec) {
+        const existingLabels = new Set(previousEngineSpec.particles.map((particle) => particle.label).filter(Boolean));
+        const additions = scene.particles.filter((particle) => !particle.label || !existingLabels.has(particle.label));
+        const interactions = [
+          ...(previousEngineSpec.interactions ?? []),
+          ...(scene.interactions ?? []),
+        ];
+        const uniqueInteractions = interactions.filter((link, index) => {
+          const key = `${link.from}:${link.to}:${link.label ?? ""}`;
+          return interactions.findIndex((item) => `${item.from}:${item.to}:${item.label ?? ""}` === key) === index;
+        });
+        scene = {
+          ...scene,
+          mode: "replace",
+          particles: [...previousEngineSpec.particles, ...additions].slice(0, 8),
+          interactions: uniqueInteractions.slice(0, 16),
+        };
+      } else if (scene) {
+        scene = { ...scene, mode: "replace" };
+      }
+      if (scene) {
+        const labels = new Set(scene.particles.map((particle) => particle.label).filter(Boolean));
+        scene.interactions = (scene.interactions ?? []).filter(
+          (interaction) => labels.has(interaction.from) && labels.has(interaction.to)
+        );
+      }
+      previousEngineSpec = scene ?? null;
       const flattened: CueParams = {
         ...raw,
+        ...(scene ? { scene } : {}),
         fieldMode: raw.mode as CueParams["fieldMode"],
         fieldAmplitude: raw.amplitude as CueParams["fieldAmplitude"],
         fieldFrequency: raw.frequency as CueParams["fieldFrequency"],
@@ -391,6 +489,7 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
         at: {},
         title: cue.title,
         note: cue.note,
+        assumptions: cue.assumptions || DEFAULT_SCENE_ASSUMPTION,
         params: flattened,
         pinnedPage: cue.page,
       };
@@ -411,8 +510,10 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
       ...applyCueParams({ ...s, ...base }, first.params),
       demoTitle: first.title,
       demoNote: first.note,
+      demoAssumptions: first.assumptions || DEFAULT_SCENE_ASSUMPTION,
       activeCueIndex: 0,
     }));
+    get()._syncActiveCue(true);
   },
 
   setInterpretError: (message) =>
@@ -431,6 +532,13 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
   setFieldParam: (patch) =>
     set((state) => ({
       field: { ...state.field, ...patch },
+      userModified: true,
+    })),
+
+  setEngineRuntime: (patch) =>
+    set((state) => ({
+      engineSpeed: patch.speed ?? state.engineSpeed,
+      engineDamping: patch.damping ?? state.engineDamping,
       userModified: true,
     })),
 
@@ -482,8 +590,8 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
     })),
 
   requestTransition: (from, to) => {
-    const fromN = Math.max(1, Math.min(6, Math.round(from)));
-    const toN = Math.max(1, Math.min(6, Math.round(to)));
+    const fromN = Math.max(1, Math.min(5, Math.round(from)));
+    const toN = Math.max(1, Math.min(5, Math.round(to)));
     if (fromN === toN) return;
     set({
       userModified: true,
@@ -501,6 +609,7 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
       ...applyCueParams(s, cue.params),
       demoTitle: cue.title,
       demoNote: cue.note,
+      demoAssumptions: cue.assumptions || DEFAULT_SCENE_ASSUMPTION,
       userModified: false,
     }));
   },
@@ -541,6 +650,42 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
 
   setLastPhysics: (physics) => set({ lastPhysics: physics }),
 
+  applyTutorAdjustment: (adjustment) => {
+    const { target, value } = adjustment;
+    const state = get();
+    if (target === "energy_level_n") {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 5) return;
+      set({
+        currentDemo: "bohr",
+        bohr: { ...state.bohr, energyLevelN: value },
+        metrics: computeMetrics(value),
+        resetKey: state.currentDemo === "bohr" ? state.resetKey : state.resetKey + 1,
+        demoTitle: "Tutor suggestion applied",
+        demoNote: adjustment.reason ?? `The tutor set the electron to energy level ${value}.`,
+        demoAssumptions: "Bohr hydrogen model; the displayed level and values use its idealized assumptions.",
+        userModified: true,
+      });
+      return;
+    }
+    if (["show_gluons", "show_bosons", "show_electron_cloud"].includes(target)) {
+      if (typeof value !== "boolean") return;
+      const patch = target === "show_gluons"
+        ? { showGluons: value }
+        : target === "show_bosons"
+          ? { showBosons: value }
+          : { showElectronCloud: value };
+      set({
+        currentDemo: "bohr",
+        bohr: { ...state.bohr, ...patch },
+        resetKey: state.currentDemo === "bohr" ? state.resetKey : state.resetKey + 1,
+        demoTitle: "Tutor suggestion applied",
+        demoNote: adjustment.reason ?? "The tutor updated the Bohr atom display.",
+        demoAssumptions: "Bohr atom illustration; added particle markers do not model their full interactions.",
+        userModified: true,
+      });
+    }
+  },
+
   _syncActiveCue: (force = false) => {
     const state = get();
     if (state.hold && !force) return;
@@ -561,6 +706,7 @@ export const usePhysicsStore = create<PhysicsStore>((set, get) => ({
       activeCueIndex: activeIndex,
       demoTitle: cue.title,
       demoNote: cue.note,
+      demoAssumptions: cue.assumptions || DEFAULT_SCENE_ASSUMPTION,
     }));
   },
 }));

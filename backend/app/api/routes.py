@@ -13,7 +13,14 @@ from app.agents.graph import build_graph
 from app.agents.state import TutorRequest
 from app.core.config import get_settings
 from app.llm import cache as interpret_cache
-from app.llm.interpret import PIPELINE_VERSION, InterpretError, InterpretResult, interpret_document
+from app.llm.interpret import (
+    MAX_PAGE_CHARS,
+    MAX_PAGES,
+    PIPELINE_VERSION,
+    InterpretError,
+    InterpretResult,
+    interpret_document,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -155,12 +162,12 @@ async def tutor(payload: TutorRequest) -> StreamingResponse:
 
 class InterpretPage(BaseModel):
     page: int = Field(ge=1)
-    text: str = ""
+    text: str = Field(default="", max_length=MAX_PAGE_CHARS)
 
 
 class InterpretRequest(BaseModel):
     filename: str = "document.pdf"
-    pages: list[InterpretPage] = Field(default_factory=list)
+    pages: list[InterpretPage] = Field(default_factory=list, max_length=MAX_PAGES)
 
 
 @router.post("/interpret")
@@ -172,18 +179,19 @@ async def interpret(payload: InterpretRequest) -> InterpretResult:
     entries = [{"page": entry.page, "text": entry.text} for entry in payload.pages]
     key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id + "|" + PIPELINE_VERSION)
     hit = interpret_cache.load(key)
-    if hit is not None:
+    if hit is not None and hit.get("cues"):
         try:
             return InterpretResult.model_validate({**hit, "cached": True})
         except Exception:
             pass
     try:
-        result = interpret_document(payload.filename, entries)
+        result = await asyncio.to_thread(interpret_document, payload.filename, entries)
     except InterpretError as exc:
         # Surface the real cause (retired model, missing account access, overload…)
         # instead of letting it look like the paper could not be interpreted.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    interpret_cache.save(key, result.model_dump())
+    if result.cues:
+        interpret_cache.save(key, result.model_dump())
     return result
 
 
@@ -196,7 +204,7 @@ async def _stream_interpret(payload: InterpretRequest):
     entries = [{"page": entry.page, "text": entry.text} for entry in payload.pages]
     key = interpret_cache.cache_key(payload.filename, entries, settings.nim_model_id + "|" + PIPELINE_VERSION)
     hit = interpret_cache.load(key)
-    if hit is not None:
+    if hit is not None and hit.get("cues"):
         try:
             result = InterpretResult.model_validate({**hit, "cached": True})
             yield _sse({"cues": [c.model_dump() for c in result.cues], "cached": True}, event="final")
@@ -204,19 +212,32 @@ async def _stream_interpret(payload: InterpretRequest):
         except Exception:
             pass
     yield _sse({"phase": "reading", "done": len(entries), "total": len(entries)}, event="progress")
+    loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     def on_progress(phase: str, done: int, total: int) -> None:
-        queue.put_nowait({"phase": phase, "done": done, "total": total})
+        loop.call_soon_threadsafe(
+            queue.put_nowait, {"phase": phase, "done": done, "total": total}
+        )
 
+    task = asyncio.create_task(
+        asyncio.to_thread(interpret_document, payload.filename, entries, on_progress)
+    )
     try:
-        result = await asyncio.to_thread(interpret_document, payload.filename, entries, on_progress)
+        while not task.done():
+            try:
+                progress = await asyncio.wait_for(queue.get(), timeout=0.2)
+            except asyncio.TimeoutError:
+                continue
+            yield _sse(progress, event="progress")
+        result = await task
     except InterpretError as exc:
         yield _sse({"error": str(exc)}, event="error")
         return
     while not queue.empty():
         yield _sse(queue.get_nowait(), event="progress")
-    interpret_cache.save(key, result.model_dump())
+    if result.cues:
+        interpret_cache.save(key, result.model_dump())
     yield _sse({"cues": [c.model_dump() for c in result.cues], "cached": False}, event="final")
 
 

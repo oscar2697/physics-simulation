@@ -12,10 +12,14 @@ class SceneState(BaseModel):
         default=None,
         description="ID of the document section currently being read",
     )
+    active_cue: dict[str, str] | None = Field(
+        default=None,
+        description="Current scene cue: title, note, assumptions and demo ID",
+    )
     visible_page: int | None = Field(default=None, ge=1)
     total_pages: int | None = Field(default=None, ge=1)
     scroll_progress: float | None = Field(default=None, ge=0.0, le=1.0)
-    energy_level_n: int | None = Field(default=None, ge=1, description="Bohr n of the orbiting electron")
+    energy_level_n: int | None = Field(default=None, ge=1, le=5, description="Bohr n of the orbiting electron")
     electron_position: list[float] | None = Field(default=None, description="[x, y, z]")
     atom_params: dict[str, Any] | None = Field(
         default=None,

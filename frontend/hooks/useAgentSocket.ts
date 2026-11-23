@@ -52,6 +52,7 @@ export interface InterpretedCue {
   demo: DemoId;
   title: string;
   note: string;
+  assumptions: string;
   params: Record<string, unknown>;
 }
 
@@ -220,6 +221,7 @@ export async function streamTutor(
 
 export function buildSceneStatePayload(state: {
   activeSectionId: string | null;
+  activeCue: { title: string; note: string; assumptions: string; demo: DemoId } | null;
   visiblePage: number | null;
   totalPages: number | null;
   scrollProgress: number | null;
@@ -229,6 +231,7 @@ export function buildSceneStatePayload(state: {
 }): SceneStatePayload {
   return {
     active_section: state.activeSectionId,
+    active_cue: state.activeCue,
     visible_page: state.visiblePage,
     total_pages: state.totalPages,
     scroll_progress: state.scrollProgress,

@@ -22,6 +22,10 @@ export default function StageControls() {
   const setFieldParam = usePhysicsStore((s) => s.setFieldParam);
   const setOrbitParam = usePhysicsStore((s) => s.setOrbitParam);
   const setOscParam = usePhysicsStore((s) => s.setOscParam);
+  const setEngineRuntime = usePhysicsStore((s) => s.setEngineRuntime);
+  const engineSpec = usePhysicsStore((s) => s.engineSpec);
+  const engineSpeed = usePhysicsStore((s) => s.engineSpeed);
+  const engineDamping = usePhysicsStore((s) => s.engineDamping);
   const toggleHold = usePhysicsStore((s) => s.toggleHold);
   const jumpToCue = usePhysicsStore((s) => s.jumpToCue);
 
@@ -291,6 +295,39 @@ export default function StageControls() {
               <span className="ctl-name">Driven</span>
             </label>
           </>
+        ) : currentDemo === "engine" ? (
+          <>
+            <label className="ctl" title={engineSpec?.surface.expr}>
+              <span className="ctl-name">V(x,y)</span>
+              <span className="ctl-val">
+                {(engineSpec?.surface.expr ?? "—").slice(0, 28)}
+              </span>
+            </label>
+            <label className="ctl">
+              <span className="ctl-name">Speed</span>
+              <input
+                type="range"
+                min={0.1}
+                max={3}
+                step={0.1}
+                value={engineSpeed}
+                onChange={(e) => setEngineRuntime({ speed: Number(e.target.value) })}
+              />
+              <span className="ctl-val">{engineSpeed.toFixed(1)}</span>
+            </label>
+            <label className="ctl">
+              <span className="ctl-name">Damping</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.02}
+                value={engineDamping}
+                onChange={(e) => setEngineRuntime({ damping: Number(e.target.value) })}
+              />
+              <span className="ctl-val">{engineDamping.toFixed(2)}</span>
+            </label>
+          </>
         ) : null}
       </div>
 
@@ -317,6 +354,14 @@ export default function StageControls() {
         ) : currentDemo === "oscillator" ? (
           <span className="muted">
             θ̈ = −(g/L)·sin θ − b·θ̇ {osc.driven ? "+ driving" : ""} — watch the period
+          </span>
+        ) : currentDemo === "engine" ? (
+          <span className="muted">
+            generated from the paper — particles move under −∇V
+            {engineSpec ? ` · ${engineSpec.particles.length} particle${engineSpec.particles.length === 1 ? "" : "s"}` : ""}
+            {engineSpec?.interactions?.length
+              ? ` · ${engineSpec.interactions.length} interaction link${engineSpec.interactions.length === 1 ? "" : "s"} shown diagrammatically`
+              : ""}
           </span>
         ) : (
           <span className="muted">
